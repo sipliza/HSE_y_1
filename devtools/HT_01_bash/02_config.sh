@@ -1,0 +1,11 @@
+cd web-app
+cat > config/app.conf <<EOF
+APP_NAME=web-app
+APP_VERSION=1.0
+HOST=0.0.0.0
+PORT=8080
+LOG_LEVEL=INFO
+DEBUG=false
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+EOF
