@@ -4,19 +4,25 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import ClassVar, TypeAlias
+import matplotlib.pyplot as plt
 
 
 MoneyInput: TypeAlias = Decimal | int | float | str
 
 
 class AccountType(str, Enum):
-    """Типы банковских счетов."""
+    """Типы банковских счетов.
+    checking — расчётный счёт;
+    savings — сберегательный счёт."""
     CHECKING = "checking"
     SAVINGS = "savings"
 
 
 class OperationType(str, Enum):
-    """Типы операций, записываемых в историю счёта."""
+    """Типы операций, записываемых в историю счёта.
+    deposit — пополнение счёта;
+    withdraw — снятие средств;
+    interest — начисление процентов (для сберегательного счёта)."""
     DEPOSIT = "deposit"
     WITHDRAW = "withdraw"
     INTEREST = "interest"
@@ -33,20 +39,24 @@ class Operation:
     """Неизменяемая запись об операции."""
     operation_type: OperationType
     amount: Decimal
-    timestamp: datetime
+    tstamp: datetime
     balance_after: Decimal
     status: OperationStatus
 
     def __str__(self) -> str:
         return (
-            f"{self.timestamp:%Y-%m-%d %H:%M:%S} | "
+            f"{self.tstamp:%Y-%m-%d %H:%M:%S} | "
             f"{self.operation_type.value:8} | сумма: {self.amount} | "
             f"баланс: {self.balance_after} | {self.status.value}"
         )
 
 
 class BankAccount:
-    """Общие данные и поведение банковских счетов."""
+    """Общие данные и поведение банковских счетов.
+    Атрибуты:
+        _next_number — следующий номер счёта.
+        account_type — тип счёта (определяется в подклассах).
+    """
 
     NAME_PATTERN = re.compile(
         r"(?:[A-Z][a-z]*\s+[A-Z][a-z]*|[А-ЯЁ][а-яё]*\s+[А-ЯЁ][а-яё]*)"
@@ -74,7 +84,8 @@ class BankAccount:
         return result
 
     @classmethod
-    def _money(cls, value: MoneyInput, *, must_be_positive: bool = False) -> Decimal:
+    def _money(cls, value: MoneyInput, *,
+               must_be_positive: bool = False) -> Decimal:
         """Проверяет и преобразует сумму в Decimal."""
         amount = cls._to_decimal(value, "Сумма")
 
@@ -85,14 +96,18 @@ class BankAccount:
 
     def __init__(self, owner: str, initial_balance: MoneyInput = 0) -> None:
         """Инициализация банковского счёта.
-        Записывает имя владельца, начальный баланс и создаёт пустую историю операций."""
+        Записывает имя владельца, начальный баланс
+        и создаёт пустую историю операций."""
+        if type(self) is BankAccount:
+            raise TypeError("Создавайте CheckingAccount или SavingsAccount.")
+
         if not isinstance(owner, str):
             raise ValueError("Имя владельца должно быть строкой.")
 
         normalized_owner = owner.strip()
         if not self.NAME_PATTERN.fullmatch(normalized_owner):
             raise ValueError("Имя должно быть в формате «Имя Фамилия»,\n"
-                             "с заглавных букв, только кириллицей или только латиницей.")
+                             "с заглавных букв, только кириллицей/латиницей.")
 
         balance = self._money(initial_balance)
         if balance < 0:
@@ -121,15 +136,18 @@ class BankAccount:
         return self._balance
 
     def get_balance(self) -> Decimal:
-        """Возвращает текущий баланс счёта. Метод для совместимости с интерфейсом."""
+        """Возвращает текущий баланс счёта.
+        Метод для совместимости с интерфейсом."""
         return self._balance
 
-    def _record_operation(self, operation_type: OperationType, amount: Decimal, status: OperationStatus) -> Operation:
-        """Записывает операцию в историю и возвращает объект Operation."""
+    def _record_operation(self, operation_type: OperationType,
+                          amount: Decimal,
+                          status: OperationStatus) -> Operation:
+        """Записывает операцию в историю, возвращает Operation."""
         operation = Operation(
             operation_type=operation_type,
             amount=amount,
-            timestamp=datetime.now().astimezone(),
+            tstamp=datetime.now().astimezone(),
             balance_after=self._balance,
             status=status,
         )
@@ -147,7 +165,8 @@ class BankAccount:
         )
 
     def withdraw(self, amount: MoneyInput) -> Operation:
-        """Обычное снятие средств. Если средств недостаточно, операция не выполняется."""
+        """Обычное снятие средств.
+        Если средств недостаточно, операция не выполняется."""
         amount = self._money(amount, must_be_positive=True)
 
         if amount > self._balance:
@@ -174,8 +193,11 @@ class BankAccount:
             return "История операций пуста."
         return "\n".join(str(operation) for operation in self._history)
 
-    def get_large_successful_operations(self, n: int, threshold: MoneyInput) -> tuple[Operation, ...]:
-        """Возвращает последние N успешных операций с суммой не меньше threshold."""
+    def get_large_successful_operations(
+            self,
+            n: int,
+            threshold: MoneyInput) -> tuple[Operation, ...]:
+        """Возвращает последние N операций с суммой не меньше threshold."""
         if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
             raise ValueError("N должно быть положительным целым числом.")
 
@@ -191,19 +213,17 @@ class BankAccount:
         return tuple(matching_operations[-n:])
 
     def plot_balance_history(self) -> None:
-        """Строит график баланса по времени на основе истории операций."""
+        """Строит график баланса по времени по истории операций."""
         if not self._history:
             print("История операций пуста.")
             return
 
-        import matplotlib.pyplot as plt
-
-        timestamps = [operation.timestamp for operation in self._history]
+        tstamps = [operation.tstamp for operation in self._history]
         balances = [float(operation.balance_after)
                     for operation in self._history]
 
         plt.figure(figsize=(10, 5))
-        plt.plot(timestamps, balances, marker="o", linestyle="-")
+        plt.plot(tstamps, balances, marker="o", linestyle="-")
         plt.title(
             f"История баланса счёта {self.account_number} "
             f"({self.account_type.value})"
