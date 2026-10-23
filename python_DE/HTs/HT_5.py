@@ -1,0 +1,263 @@
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from enum import Enum
+from typing import ClassVar, TypeAlias
+
+
+MoneyInput: TypeAlias = Decimal | int | float | str
+
+
+class AccountType(str, Enum):
+    CHECKING = "checking"
+    SAVINGS = "savings"
+
+
+class OperationType(str, Enum):
+    DEPOSIT = "deposit"
+    WITHDRAW = "withdraw"
+    INTEREST = "interest"
+
+
+class OperationStatus(str, Enum):
+    SUCCESS = "success"
+    FAIL = "fail"
+
+
+def _to_decimal(value: MoneyInput, field_name: str) -> Decimal:
+    """Преобразует значение в конечный Decimal, исключая bool."""
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} должно быть числом.")
+
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError(f"Некорректное значение: {field_name.lower()}.") from None
+
+    if not result.is_finite():
+        raise ValueError(f"{field_name} должно быть конечным числом.")
+
+    return result
+
+
+def money(value: MoneyInput, *, must_be_positive: bool = False) -> Decimal:
+    amount = _to_decimal(value, "Сумма")
+
+    if must_be_positive and amount <= 0:
+        raise ValueError("Сумма операции должна быть положительной.")
+
+    return amount
+
+
+@dataclass(frozen=True)
+class Operation:
+    """Неизменяемая запись об операции."""
+    operation_type: OperationType
+    amount: Decimal
+    timestamp: datetime
+    balance_after: Decimal
+    status: OperationStatus
+
+    def __str__(self) -> str:
+        return (
+            f"{self.timestamp:%Y-%m-%d %H:%M:%S} | "
+            f"{self.operation_type.value:8} | сумма: {self.amount} | "
+            f"баланс: {self.balance_after} | {self.status.value}"
+        )
+
+
+class BankAccount:
+    """Общие данные и поведение банковских счетов."""
+
+    _next_number: ClassVar[int] = 1000
+    account_type: AccountType
+
+    def __init__(
+        self,
+        owner: str,
+        initial_balance: MoneyInput = 0,
+    ) -> None:
+        if not isinstance(owner, str):
+            raise ValueError("Имя владельца должно быть строкой.")
+
+        normalized_owner = owner.strip()
+        name_pattern = r"[A-ZА-ЯЁ][a-zа-яё]*\s+[A-ZА-ЯЁ][a-zа-яё]*"
+
+        if not re.fullmatch(name_pattern, normalized_owner):
+            raise ValueError(
+                "Имя должно быть в формате «Имя Фамилия», "
+                "с заглавных букв, кириллицей или латиницей."
+            )
+
+        balance = money(initial_balance)
+        if balance < 0:
+            raise ValueError("Начальный баланс не может быть отрицательным.")
+
+        self._owner: str = normalized_owner
+        self._balance: Decimal = balance
+        self._history: list[Operation] = []
+
+        self._account_number: str = f"ACC-{BankAccount._next_number:04d}"
+        BankAccount._next_number += 1
+
+    @property
+    def owner(self) -> str:
+        return self._owner
+
+    @property
+    def account_number(self) -> str:
+        return self._account_number
+
+    @property
+    def balance(self) -> Decimal:
+        return self._balance
+
+    def get_balance(self) -> Decimal:
+        return self._balance
+
+    def _record_operation(
+        self,
+        operation_type: OperationType,
+        amount: Decimal,
+        status: OperationStatus,
+    ) -> Operation:
+        operation = Operation(
+            operation_type=operation_type,
+            amount=amount,
+            timestamp=datetime.now().astimezone(),
+            balance_after=self._balance,
+            status=status,
+        )
+        self._history.append(operation)
+        return operation
+
+    def deposit(self, amount: MoneyInput) -> Operation:
+        amount = money(amount, must_be_positive=True)
+        self._balance += amount
+        return self._record_operation(
+            OperationType.DEPOSIT,
+            amount,
+            OperationStatus.SUCCESS,
+        )
+
+    def withdraw(self, amount: MoneyInput) -> Operation:
+        """Обычное снятие: ограничено только текущим балансом."""
+        amount = money(amount, must_be_positive=True)
+
+        if amount > self._balance:
+            return self._record_operation(
+                OperationType.WITHDRAW,
+                amount,
+                OperationStatus.FAIL,
+            )
+
+        self._balance -= amount
+        return self._record_operation(
+            OperationType.WITHDRAW,
+            amount,
+            OperationStatus.SUCCESS,
+        )
+
+    def get_history(self) -> tuple[Operation, ...]:
+        """Возвращает историю как неизменяемый кортеж."""
+        return tuple(self._history)
+
+    def format_history(self) -> str:
+        if not self._history:
+            return "История операций пуста."
+        return "\n".join(str(operation) for operation in self._history)
+
+    def get_large_successful_operations(
+        self,
+        n: int,
+        threshold: MoneyInput,
+    ) -> tuple[Operation, ...]:
+        """Возвращает последние N успешных операций не меньше порога."""
+        if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+            raise ValueError("N должно быть положительным целым числом.")
+
+        minimum_amount = money(threshold, must_be_positive=True)
+        matching_operations = [
+            operation
+            for operation in self._history
+            if (
+                operation.status is OperationStatus.SUCCESS
+                and operation.amount >= minimum_amount
+            )
+        ]
+        return tuple(matching_operations[-n:])
+
+    def plot_balance_history(self) -> None:
+        """Строит график баланса после каждой операции."""
+        if not self._history:
+            print("История операций пуста. Нечего строить.")
+            return
+
+        import matplotlib.pyplot as plt
+
+        timestamps = [operation.timestamp for operation in self._history]
+        balances = [float(operation.balance_after) for operation in self._history]
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(timestamps, balances, marker="o", linestyle="-")
+        plt.title(
+            f"История баланса счёта {self.account_number} "
+            f"({self.account_type.value})"
+        )
+        plt.xlabel("Время операции")
+        plt.ylabel("Баланс после операции")
+        plt.xticks(rotation=45)
+        plt.grid(True, linestyle="--", alpha=0.7)
+        plt.tight_layout()
+        plt.show()
+
+
+class CheckingAccount(BankAccount):
+    """Расчётный счёт: использует обычные правила базового класса."""
+
+    account_type = AccountType.CHECKING
+
+
+class SavingsAccount(BankAccount):
+    """Сберегательный счёт: разрешено снимать не более 50% баланса."""
+
+    account_type = AccountType.SAVINGS
+
+    def withdraw(self, amount: MoneyInput) -> Operation:
+        amount = money(amount, must_be_positive=True)
+        maximum_withdrawal = self._balance / Decimal("2")
+
+        if amount > maximum_withdrawal:
+            return self._record_operation(
+                OperationType.WITHDRAW,
+                amount,
+                OperationStatus.FAIL,
+            )
+
+        self._balance -= amount
+        return self._record_operation(
+            OperationType.WITHDRAW,
+            amount,
+            OperationStatus.SUCCESS,
+        )
+
+    def accrue_interest(self, rate: MoneyInput) -> Operation | None:
+        """Начисляет проценты; rate=x%.
+        Если начисление равно нулю, операция не записывается.
+        """
+        rate_value = _to_decimal(rate, "Ставка")
+        if rate_value < 0:
+            raise ValueError("Ставка не может быть отрицательной.")
+
+        interest_amount = self._balance * rate_value / Decimal("100")
+
+        if interest_amount == 0:
+            return None
+
+        self._balance += interest_amount
+        return self._record_operation(
+            OperationType.INTEREST,
+            interest_amount,
+            OperationStatus.SUCCESS,
+        )
