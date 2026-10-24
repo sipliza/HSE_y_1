@@ -213,7 +213,7 @@ class BankAccount:
         return tuple(matching_operations[-n:])
 
     def plot_balance_history(self) -> None:
-        """Строит график баланса по времени по истории операций."""
+        """Строит график баланса по времени и истории операций."""
         if not self._history:
             print("История операций пуста.")
             return
